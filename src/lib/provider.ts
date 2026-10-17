@@ -7,20 +7,22 @@ export type StructuredRewrite = {
 };
 
 export interface TextProvider {
-  rewrite(instructions: string, input: string, signal: AbortSignal): Promise<string>;
+  rewrite(instructions: string, input: string, signal: AbortSignal, attachments?: Array<{ mimeType: string; data: string }>): Promise<string>;
 }
 
 class GeminiProvider implements TextProvider {
   constructor(private readonly apiKey: string, private readonly model: string) {}
 
-  async rewrite(instructions: string, input: string, signal: AbortSignal): Promise<string> {
+  async rewrite(instructions: string, input: string, signal: AbortSignal, attachments: Array<{ mimeType: string; data: string }> = []): Promise<string> {
+    const parts: Array<Record<string, string>> = [{ text: input }];
+    for (const attachment of attachments) parts.push({ inlineData: JSON.stringify({ mimeType: attachment.mimeType, data: attachment.data.split(",", 2)[1] }) });
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": this.apiKey },
       signal,
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: instructions }] },
-        contents: [{ role: "user", parts: [{ text: input }] }],
+        contents: [{ role: "user", parts: parts.map((part) => part.inlineData ? { inlineData: JSON.parse(part.inlineData) } : part) }],
         generationConfig: {
           responseMimeType: "application/json",
           responseSchema: {

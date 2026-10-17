@@ -63,6 +63,13 @@ function decodePdfText(bytes: Uint8Array): string {
   return pieces.join(" ").replace(/\\([\\()])/g, "$1").replace(/\\n/g, "\n").replace(/\s{2,}/g, " ").trim();
 }
 
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const step = 0x8000;
+  for (let index = 0; index < bytes.length; index += step) binary += String.fromCharCode(...bytes.subarray(index, index + step));
+  return btoa(binary);
+}
+
 function downloadPdf(text: string) {
   const escape = (value: string) => value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
   const lines = text.split(/\r?\n/).flatMap((line) => {
@@ -91,6 +98,7 @@ export function Workspace() {
   const [dark, setDark] = useState(false);
   const [activeTab, setActiveTab] = useState<"refine" | "research">("refine");
   const fileInput = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<Array<{ name: string; mimeType: string; data: string }>>([]);
 
   const checks = useMemo(() => original && refined ? compareDrafts(original, refined, settings.preserveCitations) : [], [original, refined, settings.preserveCitations]);
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings((current) => ({ ...current, [key]: value }));
@@ -105,7 +113,7 @@ export function Workspace() {
       const response = await fetch("/api/rewrite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: original, ...settings }),
+        body: JSON.stringify({ text: original, ...settings, attachments }),
       });
       const data = await response.json() as { refinedText?: string; changeSummary?: string[]; reviewNotes?: string[]; error?: string };
       if (!response.ok) throw new Error(data.error ?? "The rewrite could not be completed.");
@@ -136,14 +144,23 @@ export function Workspace() {
 
   async function importPdf(file?: File) {
     if (!file) return;
-    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) { setError("Choose a PDF file."); return; }
-    const text = decodePdfText(new Uint8Array(await file.arrayBuffer()));
-    if (!text) { setError("This PDF has no selectable text. Run OCR on a scanned PDF, then import it again."); return; }
-    setOriginal(text); setRefined(""); setSummary([]); setReviewNotes([]); setError(""); sendNotice(`${file.name} imported.`);
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isImage = /^image\/(png|jpeg|jpg|webp|gif)$/i.test(file.type);
+    if (!isPdf && !isImage) { setError("Choose a PDF or PNG, JPG, WebP, or GIF image."); return; }
+    if (file.size > 5_000_000) { setError("This file is larger than 5 MB. Compress it or choose fewer pages before uploading."); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const data = `data:${file.type || (isPdf ? "application/pdf" : "image/png")};base64,${toBase64(bytes)}`;
+    const extracted = isPdf ? decodePdfText(bytes) : "Describe and preserve the important visual information in the attached image.";
+    setAttachments((current) => [...current.filter((item) => item.name !== file.name), { name: file.name, mimeType: file.type || (isPdf ? "application/pdf" : "image/png"), data }].slice(-6));
+    const safeText = extracted.length > 28_000
+      ? `${extracted.slice(0, 28_000)}\n\n[The full document is attached; this preview is shortened for the editor.]`
+      : extracted;
+    if (safeText) setOriginal((current) => current.trim() ? `${current}\n\n${safeText}` : safeText);
+    setRefined(""); setSummary([]); setReviewNotes([]); setError(""); sendNotice(`${file.name} attached for Gemini vision.`);
   }
 
   function clearDraft() {
-    setOriginal(""); setRefined(""); setSummary([]); setReviewNotes([]); setError(""); setShowCompare(false);
+    setOriginal(""); setRefined(""); setAttachments([]); setSummary([]); setReviewNotes([]); setError(""); setShowCompare(false);
   }
 
   return <main className={`app-shell ${dark ? "dark" : ""}`}>
@@ -184,7 +201,7 @@ export function Workspace() {
     </section>
 
     <section className="editor-card" aria-label="Writing workspace">
-      <div className="editor-heading"><div className="editor-intro"><span className="section-kicker">THE WRITING DESK</span><h2>Shape your draft.</h2><p className="editor-subtitle">Paste text or import a text-based PDF. Then press Refine.</p></div><div className="editor-tools"><input ref={fileInput} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /><button className="primary-tool" onClick={() => fileInput.current?.click()}>Import PDF</button><button className="quiet-action" onClick={pasteDraft}>Paste</button><button className="quiet-action" onClick={clearDraft}>Clear all</button><span className="tool-separator" /><button className="round-tool" aria-label="Theme" onClick={() => setDark(!dark)}><Icon name="sun" /></button></div></div>
+      <div className="editor-heading"><div className="editor-intro"><span className="section-kicker">THE WRITING DESK</span><h2>Shape your draft.</h2><p className="editor-subtitle">Paste text or attach a PDF/image. Gemini can inspect visual pages and diagrams.</p></div><div className="editor-tools"><input ref={fileInput} type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/gif" hidden onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /><button className="primary-tool" onClick={() => fileInput.current?.click()}>Attach PDF or image</button><button className="quiet-action" onClick={pasteDraft}>Paste</button><button className="quiet-action" onClick={clearDraft}>Clear all</button><span className="tool-separator" /><button className="round-tool" aria-label="Theme" onClick={() => setDark(!dark)}><Icon name="sun" /></button></div></div>
       <div className="editors-grid">
         <section className="writing-panel original-panel">
           <div className="panel-header"><div className="panel-title"><span className="panel-index">01</span><h3>Original text</h3></div><span className="panel-state">YOUR DRAFT</span></div>

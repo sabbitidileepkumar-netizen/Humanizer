@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   if (!allowRewrite(clientKey(request))) return error("Too many rewrite requests. Please wait a minute and try again.", 429);
 
   const bodyBytes = Number(request.headers.get("content-length") ?? 0);
-  if (Number.isFinite(bodyBytes) && bodyBytes > 140_000) return error("This request is too large. Split the document into shorter sections and try again.", 413);
+  if (Number.isFinite(bodyBytes) && bodyBytes > 9_500_000) return error("This upload is too large for one request. Use fewer or smaller pages/images.", 413);
 
   let body: unknown;
   try {
@@ -47,6 +47,8 @@ export async function POST(request: Request) {
   if (!hasApiKey) {
     return error("AI rewriting is not configured yet. Add the configured provider's server-side API key, then restart the app.", 503);
   }
+  const attachmentBytes = input.data.attachments.reduce((total, item) => total + Math.ceil((item.data.length * 3) / 4), 0);
+  if (attachmentBytes > 7_000_000) return error("Attachments are too large for one Gemini request. Try fewer pages or smaller images.", 413);
 
   const chunks = splitIntoChunks(input.data.text, 7_000);
   if (chunks.length > 5) return error("This document is too long to refine in one pass. Split it into shorter sections and try again.", 413);
@@ -67,6 +69,7 @@ export async function POST(request: Request) {
         buildInstructions(input.data),
         buildChunkInput(input.data, chunk, index, chunks.length),
         AbortSignal.timeout(23_000),
+        input.data.attachments,
       );
       const result = parseRewriteResult(raw);
       refined.push(result.refinedText);

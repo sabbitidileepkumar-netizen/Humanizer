@@ -25,6 +25,11 @@ export const rewriteRequestSchema = z.object({
   preserveTechnical: z.boolean().default(true),
   preserveCitations: z.boolean().default(true),
   explainChanges: z.boolean().default(false),
+  attachments: z.array(z.object({
+    name: z.string().trim().min(1).max(180),
+    mimeType: z.string().regex(/^(application\/pdf|image\/(png|jpeg|jpg|webp|gif))$/i, "Only PDF and common image files are supported."),
+    data: z.string().regex(/^data:(application\/pdf|image\/[a-z0-9.+-]+);base64,[a-z0-9+/=]+$/i, "The attachment data is invalid."),
+  })).max(6).default([]),
 });
 
 export type RewriteRequest = z.infer<typeof rewriteRequestSchema>;
